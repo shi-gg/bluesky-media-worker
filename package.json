@@ -11,5 +11,11 @@
 		"dev": "wrangler dev",
 		"start": "wrangler dev",
 		"cf-typegen": "wrangler types"
+	},
+	"dependencies": {
+		"@atcute/atproto": "^3.1.9",
+		"@atcute/bluesky": "^3.2.12",
+		"@atcute/client": "^4.1.0",
+		"@atcute/lexicons": "^1.2.5"
 	}
 }

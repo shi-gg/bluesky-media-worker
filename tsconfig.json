@@ -32,6 +32,8 @@
 		/* Skip type checking all .d.ts files. */
 		"skipLibCheck": true,
 		"types": [
+			"@atcute/bluesky",
+			"@atcute/atproto",
 			"./worker-configuration.d.ts"
 		]
 	},
