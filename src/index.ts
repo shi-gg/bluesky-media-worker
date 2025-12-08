@@ -1,6 +1,6 @@
 import { Client, simpleFetchHandler } from '@atcute/client';
 import { AppBskyEmbedRecordWithMedia, AppBskyFeedDefs, AppBskyFeedPost } from '@atcute/bluesky';
-import { is, type ResourceUri } from '@atcute/lexicons';
+import { Did, is, type ResourceUri } from '@atcute/lexicons';
 import template from '../assets/template.html';
 
 type PostWithRecord = AppBskyFeedDefs.PostView & { record: AppBskyFeedPost.Main };
@@ -13,7 +13,6 @@ type MetaResult =
     | { status: 'not-found' }
     | { status: 'error' };
 
-const SUPPORT_URL = 'https://wamellow.com/docs/bluesky';
 const HTML_HEADERS = { 'Content-Type': 'text/html' };
 const POST_PATTERN = new URLPattern({ pathname: '/profile/:actor/post/:rkey' });
 
@@ -45,8 +44,8 @@ export default {
         if (metaResult.status === 'error') return serverError();
         if (metaResult.status === 'not-found') return notFound();
 
-        if (url.searchParams.get('redirect')) {
-            const tag = metaResult.tags.find(tag => tag.includes('og:image'));
+        if (url.searchParams.get('redirect') || metaResult.tags.some(tag => tag.includes('og:video'))) {
+            const tag = metaResult.tags.find(tag => tag.includes('og:video') || tag.includes('og:image'));
             const mediaUrl = tag?.split('content="')[1]?.split('"')[0];
             if (mediaUrl) {
                 return Response.redirect(mediaUrl, 302);
@@ -66,34 +65,32 @@ const meta = (property: string, content: string) => `<meta property="${property}
 const renderTemplate = ({ did, rkey, meta }: { did: string; rkey: string; meta: string[] }) => {
     return new Response(
         template
-            .replace('{{username}}', did)
-            .replace('{{id}}', rkey)
+            .replaceAll('{{username}}', did)
+            .replaceAll('{{id}}', rkey)
             .replace('<!-- template -->', meta.join('\n')),
         { headers: HTML_HEADERS },
     );
 };
 
-const invalidUrl = () => new Response(`Invalid URL\n${SUPPORT_URL}`, { status: 400 });
-const serverError = () => new Response(`Error\n${SUPPORT_URL}`, { status: 500 });
-const notFound = () => new Response(`Not Found\n${SUPPORT_URL}`, { status: 404 });
+const invalidUrl = () => new Response("Invalid URL", { status: 400 });
+const serverError = () => new Response("Internal Server Error", { status: 500 });
+const notFound = () => new Response("Not Found", { status: 404 });
 
 const mediaMeta = (
     embed:
         | AppBskyFeedDefs.PostView['embed']
         | AppBskyEmbedRecordWithMedia.View['media']
         | undefined,
+    did: Did
 ): string[] => {
     switch (embed?.$type) {
         case 'app.bsky.embed.images#view': return embed.images.map((image) => meta('og:image', image.thumb));
-        case 'app.bsky.embed.video#view': {
-            if (!embed.thumbnail) return [];
-            return [meta('og:video', embed.thumbnail), meta('og:image', embed.thumbnail)];
-        }
+        case 'app.bsky.embed.video#view': return [meta('og:video', `https://bsky.social/xrpc/com.atproto.sync.getBlob?did=${did}&cid=${embed.cid}`)];
         default: return [];
     }
 };
 
-const quoteMeta = (post: PostWithRecord) => {
+const quoteMeta = (post: PostWithRecord, did: Did) => {
     const tags = [
         meta('og:title', `${post.author.displayName ?? post.author.handle} (${post.author.handle})`),
     ];
@@ -102,7 +99,7 @@ const quoteMeta = (post: PostWithRecord) => {
         tags.push(meta('og:description', post.record.text));
     }
 
-    return [...tags, ...mediaMeta(post.embed)];
+    return [...tags, ...mediaMeta(post.embed, did)];
 };
 
 async function buildMetaTags(post: PostWithRecord): Promise<MetaResult> {
@@ -111,12 +108,12 @@ async function buildMetaTags(post: PostWithRecord): Promise<MetaResult> {
     switch (embed?.$type) {
         case 'app.bsky.embed.images#view':
         case 'app.bsky.embed.video#view':
-            return { status: 'ok', tags: mediaMeta(embed) };
+            return { status: 'ok', tags: mediaMeta(embed, post.author.did) };
 
         case 'app.bsky.embed.record#view': {
             const quoteUri = embed.record.uri as ResourceUri;
             const quote = await fetchPostView(quoteUri);
-            return quote.status === 'ok' ? { status: 'ok', tags: quoteMeta(quote.post) } : quote;
+            return quote.status === 'ok' ? { status: 'ok', tags: quoteMeta(quote.post, post.author.did) } : quote;
         }
 
         case 'app.bsky.embed.recordWithMedia#view': {
@@ -126,7 +123,7 @@ async function buildMetaTags(post: PostWithRecord): Promise<MetaResult> {
 
             return {
                 status: 'ok',
-                tags: [...quoteMeta(quote.post), ...mediaMeta(embed.media)],
+                tags: [...quoteMeta(quote.post, post.author.did), ...mediaMeta(embed.media, post.author.did)],
             };
         }
 
