@@ -13,9 +13,10 @@ type PostResult =
     | { status: "error"; };
 type MetaResult =
     | { status: "ok"; tags: string[]; }
-    | { status: "not-found"; }
-    | { status: "error"; };
+    | { status: "not-found"; tags: string[]; }
+    | { status: "error"; tags: string[]; };
 
+const DISCORD_USER_AGENT = "Discordbot/2.0";
 const HTML_HEADERS = { "Content-Type": "text/html" };
 const POST_PATTERN = new URLPattern({ pathname: "/profile/:actor/post/:rkey" });
 
@@ -43,13 +44,18 @@ export default {
         if (postResult.status === "error") return serverError();
         if (postResult.status === "not-found") return notFound();
 
-        const metaResult = await buildMetaTags(postResult.post);
-        if (metaResult.status === "error") return serverError();
-        if (metaResult.status === "not-found") return notFound();
+        const { tags, status } = await buildMetaTags(postResult.post);
+        if (status === "error") return serverError();
+        if (status === "not-found") return notFound();
 
-        if (url.searchParams.get("redirect") || metaResult.tags.some((tag) => tag.includes("og:video"))) {
-            const tag = metaResult.tags.find((tag) => tag.includes("og:video") || tag.includes("og:image"));
+        const isDiscord = request.headers.get("user-agent")?.includes(DISCORD_USER_AGENT);
+        const isMediaOnly = tags.length === 1 && (tags[0].includes("og:image") || tags[0].includes("og:video"));
+        const isRedirect = url.searchParams.get("redirect");
+
+        if ((isMediaOnly || isRedirect) && isDiscord) {
+            const tag = tags.find((tag) => tag.includes("og:video") || tag.includes("og:image"));
             const mediaUrl = tag?.split("content=\"")[1]?.split("\"")[0];
+
             if (mediaUrl) {
                 return Response.redirect(mediaUrl, 302);
             }
@@ -58,7 +64,7 @@ export default {
         return renderTemplate({
             did,
             rkey,
-            meta: metaResult.tags
+            meta: tags
         });
     }
 } satisfies ExportedHandler<Env>;
@@ -116,13 +122,19 @@ async function buildMetaTags(post: PostWithRecord): Promise<MetaResult> {
         case "app.bsky.embed.record#view": {
             const quoteUri = embed.record.uri;
             const quote = await fetchPostView(quoteUri);
-            return quote.status === "ok" ? { status: "ok", tags: quoteMeta(quote.post, post.author.did) } : quote;
+
+            return quote.status === "ok"
+                ? { status: "ok", tags: quoteMeta(quote.post, post.author.did) }
+                : { status: quote.status, tags: [] };
         }
 
         case "app.bsky.embed.recordWithMedia#view": {
             const quoteUri = embed.record.record.uri;
             const quote = await fetchPostView(quoteUri);
-            if (quote.status !== "ok") return quote;
+
+            if (quote.status !== "ok") {
+                return { status: quote.status, tags: [] };
+            }
 
             return {
                 status: "ok",
@@ -131,7 +143,7 @@ async function buildMetaTags(post: PostWithRecord): Promise<MetaResult> {
         }
 
         default:
-            return { status: "not-found" };
+            return { status: "not-found", tags: [] };
     }
 }
 
