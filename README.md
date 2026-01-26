@@ -15,7 +15,7 @@ To get started with this project, you'll need to have the following installed:
 
     1. **Clone the repository**:
         ```sh
-        git clone https://github.com/wamellow/bluesky-media-worker
+        git clone https://github.com/shi-gg/bluesky-media-worker
         cd bluesky-media-worker
         ```
 
